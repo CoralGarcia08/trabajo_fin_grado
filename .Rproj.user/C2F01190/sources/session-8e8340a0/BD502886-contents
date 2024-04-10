@@ -1,0 +1,827 @@
+
+#' # Objetivo
+#' Queremos estimar la ley de OKUN con datos Municipales,
+#' en este caso para explicar la Tasa de Paro Municipal en función
+#' de la renta percápita Municipal. Al tener datos georeferenciados
+#' nos preguntaremos si en la explicación de la tasa de paro municipal
+#' existen correlaciones espaciales con los municipio vecinos, y en tal caso
+#' presentaremos dos modelos para intentar estimar dichos efectos espaciales
+
+# Carga de Librerías necesarias ----
+library(rgdal)
+library(sf)
+# library(maptools) # leer los shapes
+
+library(sp) # paquete de referencia de datos espaciales
+library(spdep) # econometría espacial
+
+# Es posible que haya algún error con la librería raster. Hay que instalar
+# install.packages('terra', repos='https://rspatial.r-universe.dev')
+# install.packages('raster', repos='https://rspatial.r-universe.dev')
+# y para ello es posible que sea necesario (sólo en windows) instalar "rstools" desde su página
+# https://cran.rstudio.com/bin/windows/Rtools/rtools40.html
+
+# también puede intalarse 
+# install.packages('spDataLarge', repos='https://nowosad.github.io/drat/', type='source')
+
+
+library(sphet) # modelos de regresión espacial con heterocedasticidad
+library(spatialreg) # para otros métodos de regresión espacial
+# library(spse) # spse: Spatial Simultaneous Equations and Spatial Sur Model
+# install.packages("spse", repos="http://R-Forge.R-project.org")
+
+library(tmap)
+
+library(tidyverse)
+library(spdplyr) #es una versión del dplyr especial para objetos sp
+
+
+#library(RColorBrewer) # paleta de colores
+#library(classInt)# para crear intervalos
+#library(scales)
+
+library(stargazer) # tablas de resultados de moedlos de regresi?n
+
+
+# Leo los Shapes ----
+#' # Carga de Cartografías de los Municipios Españoles
+
+# Leo losshape con `rgdal` desde el directorio de trabajo o específico 
+#MUNIC_ESP<-readOGR( dsn= "." , layer="Munics04_GEO_ETRS89_DAT")
+#MUNIC_ESP<-readOGR( dsn= getwd() , layer="Munics04_GEO_ETRS89_DAT")
+MUNIC_ESP<-rgdal::readOGR(dsn="cartografías",layer="Munic04_ESP", stringsAsFactors = FALSE)
+summary(MUNIC_ESP)
+
+
+# primer mapa municipal
+plot(MUNIC_ESP)
+
+# El SpatialPoligonDataFrame que hemos cargado incorpora una base con datos Municipales
+# Podemos consultar por ejemplo los municipios mñas ricos en la base de datos
+
+head(MUNIC_ESP@data%>%
+       arrange(desc(RENTPCAP07))%>%
+       select(MUN,RENTPCAP07), 10)
+
+head(row.names(MUNIC_ESP@data), 10)
+#View(head(MUNIC_ESP@data,10))
+
+hist(MUNIC_ESP@data$TASA_PARO)
+hist(MUNIC_ESP@data$RENTPCAP07)
+
+
+# compruebo si hay datos nulos
+
+table(is.na(MUNIC_ESP@data$RENTPCAP07))
+table(is.na(MUNIC_ESP@data$TASA_PARO))
+
+# si necesitase añadir algún campo adicional
+#MUNIC_ESP@data<-dplyr::left_join(MUNIC_ESP@data,tablanewdatos, by=c("CODINE"="geo_code"))
+#o tambien con sp::spCbind(MUNIC_ESP@data, tablanewdatos) los rownames deben ser los mismos
+# ojo con los cambios de nombre de filas y de poligonos  (VER ARCHIVO de lectura de cartografías)
+
+# Mapas por cuantiles ----
+#' # Mapas Descriptivos de la renta percápita y la tasa de paro
+
+# Renta percápita
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="YlOrBr",col = "RENTPCAP07",style = "quantile")+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+
+#Mapa de la Tasa de Paro
+map_Tparo <-  tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="PuBuGn",col = "TASA_PARO",style = "quantile")+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+map_Tparo
+
+tmap_save(map_Tparo, filename="graficoTasa de Paro.jpeg", width=15, height=10, units="cm",dpi = 600, bg ="transparent", quality = 100)
+
+
+tmap_mode("view")  # Esto pasa de ser un plot estático a uilizar leaflet y Viewer
+map_Tparo
+# para añadir mapas base  + tm_basemap(server="OpenTopoMap"), o "OpenStreetMap" o "Esri.WorldGrayCanvas" o "Esri.WorldTopoMap"
+tmap_mode("plot")
+
+
+
+# podría intentar hacer los dos
+tmap_mode("view")
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette =c("YlOrBr"),col = c("RENTPCAP07","TASA_PARO"),style = "quantile")+
+        tm_facets(sync = TRUE, ncol = 2)+
+        tmap_options(check.and.fix = TRUE)
+
+
+tmap_mode("plot")
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette =c("YlOrBr"),col = c("RENTPCAP07","TASA_PARO"),style = "quantile")+
+        tm_facets(sync = TRUE, ncol = 2)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.5,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1,
+                  legend.height = 1)
+
+
+# Observando esos dos gráficos, ¿podría decirse que los municipios con mayor nivel de Renta son los que tienen menores tasas de paro?
+
+
+##################################################
+# Creo la matriz de pesos----
+#' # La matriz de pesos espaciales
+
+
+
+#### Por contiguidad de la Reina
+list.queen<-poly2nb(MUNIC_ESP, queen=TRUE) # para el primero sus vecinos son el 10 el 12 17....
+
+
+#se puede grabar como un fichero de pesos .GAL (se puede editar como texto)
+#write.nb.gal(list.queen, "list_queen.GAL")
+#o se puede editar directamente la lista 
+# Editar el archivo GAL con block de notas
+# leer una matriz de pesos GAL de contigüidad espacial existente
+# list.queen <- read.gal("list_queen.GAL", region.id=NULL, override.id=FALSE)
+
+
+
+# puedo editar la lista  (OJO, MANTENER EL ORDEN DE MENOR A MAYOR SI NO DEJA DE FUNCIONAR)
+# list.queen[[7]] <- c(8L,12L, 43L, 46L)   # La "L" es para indicar que es un entero (que es el tipo que requiere la matriz de pesos)
+# list.queen[[35]] <- 38L
+# list.queen[[38]] <- 35L
+
+
+
+#matriz de pesos
+# Esquema de codificación
+#B: codificación binaria básica
+#w: filas estandarizadas # esto para construir el operador retardo espacial 
+#c: estandarización global
+#U: igual a C dividida por el número de vecinos
+#S: esquema de codificación propuesto para estabilización de la varianza
+
+
+
+W1<-nb2listw(list.queen, style="W", zero.policy=TRUE) #ESTILO W MATRIZ CON FILAS ESTANDARIZADAS (LA SUMA DE LA FILA ES 1)
+
+hist(card(list.queen)) # histograma del número de vecinos
+summary(card(list.queen))
+
+# mapa de contigüidades
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey")
+plot(W,coordinates(MUNIC_ESP),add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey",xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(W,coordinates(MUNIC_ESP), add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+#MODIFICAMOS LA M ATRIZ DE PESOS PARA CONECTAR LS ISLAS QUE NO TIENEN VECINOS AL LAO CON ALGUNO QUE ESTE CERCA (EJM FORMENTERA)
+
+
+###############[SALTAR ESTA PARTE]
+###### PARA ESTIMAR LA MATRIZ DE PESOS POR VECIONS CERCANOS
+coords1 <- coordinates(MUNIC_ESP)
+col.knn <- knearneigh(coords1, k=4) # Aquí estaría seleccionando los 4 vecinos más cercanos
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey", xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(knn2nb(col.knn), coords1, add=TRUE)
+title(main="K nearest neighbours, k = 4")
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+Knn4<-knn2nb(col.knn)
+
+# calculo distancias
+dists1 <- nbdists(Knn4, coords1)
+
+#convierto la matriz en simétrica (NO ES NECESARIO)
+# knn4<- make.sym.nb(knn4)
+
+#matriz de pesos
+W1 <- nb2listw(Knn4, glist=dists1, style="W",zero.policy=TRUE)
+
+
+hist(card(Knn4)) # histograma del número de vecinos
+summary(card(Knn4))
+
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey",xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(W,coordinates(MUNIC_ESP), add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+# Compute the number of disjoint connected subgraphs in the map
+n.comp.nb(Knn4)$nc
+
+
+
+
+
+
+###### PARA LA ESTIMACION DE LA MATRIZ DE PESOS POR TODOS VECINOS A DISTANCIA
+coords<-coordinates(MUNIC_ESP)
+
+# Distancia entre 0 y la distancia máxima del más cercano (Asegura que todos tienen al menos uno)
+all.linked <- max(unlist(nbdists(knn2nb(knearneigh(coords)), coords)))
+W_dist<-dnearneigh(coords,0,all.linked,longlat = FALSE)
+
+# Distancia entre 0 y 15 Kms
+#W_dist<-dnearneigh(coords,0,15,longlat = TRUE) # distancia en Km
+
+
+hist(card(W_dist)) # histograma del número de vecinos
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey",xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(W_dist,coordinates(MUNIC_ESP), add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+
+# Calcula distancias
+dists <- nbdists(W_dist, coords)
+
+#matriz de pesos
+W <- nb2listw(W_dist, glist=dists, style="W",zero.policy=TRUE) #NO ME CARGA :(
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey",xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(W,coordinates(MUNIC_ESP), add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+
+###### PARA LA ESTIMACION DE LA MATRIZ DE PESOS POR inversa a DISTANCIA
+
+# Selecciono primero lista de Vecinos cercanos
+coords<-coordinates(MUNIC_ESP)
+
+# Distancia entre 0 y 15 Kms
+lista_v<-dnearneigh(coords,0,15,longlat = TRUE) # distancia en Km
+
+# Los 10 municipios Más cercanos
+lista_v<-knn2nb(knearneigh(coords, k=10))
+
+
+
+#Luego calculo distancias cualquiera de las dos listas anteriores
+dists <- nbdists(lista_v, coords)
+
+# y ahora le hago una transformación 1/distancia
+dinv_dist <- lapply(dists, function(x) 1/x)
+
+# y ahora la matriz de pesos (que cambia respecto a las anteriores de lista de vecinos)
+dinvs_W <- nb2listw(lista_v, glist=dinv_dist)
+
+par(mar=c(0,0,0,0))
+plot(MUNIC_ESP, border="grey",xlim=c(-0.5,0.5), ylim=c(37,40))
+plot(dinvs_W,coordinates(MUNIC_ESP), add=TRUE)
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+
+
+##############################################
+##############################################
+# Una vez que he estimado W (lista) de la forma que nos parezca más adecuada
+# Puedo convertirla en matriz para calcular la matriz de pesos y
+# y los retardos espaciales
+
+# Para este ejemplo me quedo con la matriz de vecidandes tipo REINA
+list.queen<-poly2nb(MUNIC_ESP, queen=TRUE)
+W1<-nb2listw(list.queen, style="W", zero.policy=TRUE)
+
+# y ahora obtengo WM en forma de matriz para calcular retardos
+
+WM1<-listw2mat(W1)
+dim(WM1)
+rowSums(WM1) # ya está estandarizada por filas
+
+
+
+#creo el retardo espacial de la tasa de paro ----
+#' # Retardos Espaciales
+
+MUNIC_ESP@data$TASA_PAROW<-(WM1%*%MUNIC_ESP@data$TASA_PARO)[,1]
+
+# El retardo espacial también se puede calcular directamente
+
+MUNIC_ESP@data$TASA_PAROW<-spdep::lag.listw(var=MUNIC_ESP@data$TASA_PARO,x=W1)
+
+
+summary(MUNIC_ESP@data$TASA_PARO)
+summary(MUNIC_ESP@data$TASA_PAROW)
+
+table(is.na(MUNIC_ESP@data$TASA_PAROW))
+
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+hist(MUNIC_ESP@data$TASA_PARO, nclass = 20, col=3, freq = FALSE)
+hist(MUNIC_ESP@data$TASA_PAROW, nclass=20, col=2, freq=FALSE)
+
+plot(density(MUNIC_ESP@data$TASA_PAROW), col="red", lwd=2, main="")
+lines(density(MUNIC_ESP@data$TASA_PARO), col="darkgreen", lwd=2)
+legend("topright",col=c("red","darkgreen"),legend = c("PAROW","PARO"), lty=1,lwd=2)
+
+
+library(tmap)
+
+map_TparoW <-  tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="PuBuGn",col = "TASA_PAROW",style = "quantile")+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+map_TparoW
+
+#SE PARECE MUCHO AL OT5RO POR LO QUE HAY DEPENDENCIA ESPACIAL.
+#PORQ ESTA MAS SUAVIZADA? MEDIA MOVIL. ESTAMOS REPRESENTANDO LOS VALORES DE ALREDEDOR
+
+tmap_save(map_TparoW, filename="graficoTasa de ParoW.jpeg", width=15, height=10, units="cm",dpi = 600, bg ="transparent", quality = 100)
+
+
+
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette =c("PuBuGn"),col = c("TASA_PARO","TASA_PAROW"),style = "quantile")+
+        tm_facets(sync = TRUE, ncol = 2)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.5,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1,
+                  legend.height = 1)
+
+
+# correlación espacial----
+#' # Correlación entre una variable y su retardo espacial
+ 
+plot(MUNIC_ESP$TASA_PAROW~MUNIC_ESP$TASA_PARO)
+
+# Coeficiente de Correlación
+cor.test(MUNIC_ESP$TASA_PAROW,MUNIC_ESP$TASA_PARO)
+
+# Coeficiente de Correlación espacial: La I de Moran **Global**
+moran.test(MUNIC_ESP$TASA_PARO,W1,zero.policy = TRUE)
+#HIP NULA: AUSESNCIA DE 
+par(mar=c(5.1, 4.1, 4.1, 2.1))
+
+moran.plot(MUNIC_ESP$TASA_PARO,W1,zero.policy = TRUE)
+
+# Estimación de la desviación típica de la I de Moran por Montecarlo
+moran.mc(MUNIC_ESP$TASA_PARO,W1,zero.policy = TRUE,nsim=1000) #Estimaci?n de la I de moran con simulaci?n
+
+# Correlación Espacial **Local**
+
+GLocal<-localG(MUNIC_ESP$TASA_PARO,W1,zero.policy = TRUE) # Getis-Ord Statistics
+summary(GLocal)
+# esta Gd de Getis sirve para hacer clusters: Valores Positivos y significativos indica valores altos 
+# rodeados de valores altos; mientras que valores Negativos significativos indica valores
+# bajos rodeados de valores bajos
+
+MUNIC_ESP@data$GLocal<-as.numeric(GLocal)
+
+# Mapa de la correlación Espacial
+
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="RdBu",col = "GLocal",style = "pretty",n=6)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+
+
+
+# Otra forma de estimar la correlación espacial Local es con el I de Moral
+
+lmoran<-localmoran(MUNIC_ESP$TASA_PARO,W1,zero.policy = TRUE)  # I de moran local (para cada poligono)
+summary(lmoran) # la quinta columna proporciona el pValor 
+# ojo aquí el valor de la I indica si la autocorrelación es positiva o negativa, por eso para hacer 
+# cluster se recurre a los mapas LISA en función del cuadrante del
+# scatterplot de Moran... explicados más alante
+
+
+MUNIC_ESP@data$lmoran<-lmoran[,5]
+
+MUNIC_ESP@data$quad_sig <- NA
+
+
+#' ### Mapa de las correlaciones espaciales locales y significativas
+#' mapas LISA-Local Indicator of Spatial Association
+
+
+MUNIC_ESP@data$TASA_PARO_TIP<-scale(MUNIC_ESP@data$TASA_PARO)
+MUNIC_ESP@data$TASA_PAROW_TIP<-scale(MUNIC_ESP@data$TASA_PAROW)
+hist(MUNIC_ESP@data$TASA_PAROW_TIP)
+
+# high-high quadrant
+MUNIC_ESP@data$quad_sig[(MUNIC_ESP@data$TASA_PARO_TIP >= 0 & MUNIC_ESP@data$TASA_PAROW_TIP >= 0 & 
+                                 MUNIC_ESP@data$lmoran <= 0.05)] <- "high-high"
+# low-low quadrant
+MUNIC_ESP@data$quad_sig[(MUNIC_ESP@data$TASA_PARO_TIP <= 0 & 
+                                 MUNIC_ESP@data$TASA_PAROW_TIP <= 0 & 
+                                 MUNIC_ESP@data$lmoran <= 0.05)] <- "low-low"
+
+# high-low quadrant
+MUNIC_ESP@data$quad_sig[(MUNIC_ESP@data$TASA_PARO_TIP >= 0 & 
+                                 MUNIC_ESP@data$TASA_PAROW_TIP <= 0 & 
+                                 MUNIC_ESP@data$lmoran <= 0.05)] <-  "high-low"
+
+
+# low-high quadrant
+MUNIC_ESP@data$quad_sig[(MUNIC_ESP@data$TASA_PARO_TIP <= 0 & 
+                                 MUNIC_ESP@data$TASA_PAROW_TIP >= 0 & 
+                                 MUNIC_ESP@data$lmoran <= 0.05)] <-  "low-high"
+
+# non-significant observations
+MUNIC_ESP@data$quad_sig[MUNIC_ESP@data$lmoran > 0.05] <-  "not signif."
+
+
+names(table(MUNIC_ESP@data$quad_sig))
+
+
+MUNIC_ESP@data$quad_sig <- as.factor(MUNIC_ESP@data$quad_sig)
+
+
+
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="Set1",col = "quad_sig",style = "pretty",n=5)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+
+
+
+
+
+# correlación tasa de paro con Rentapercápita----
+
+cor.test(MUNIC_ESP$TASA_PARO,MUNIC_ESP$RENTPCAP07)
+plot(MUNIC_ESP$TASA_PARO~MUNIC_ESP$RENTPCAP07)
+
+#install.packages("corrplot")
+#library(corrplot)
+#corrplot(correlacion, method="color")
+#correlacion<-cor(MUNIC_ESP@data[,c(58, 9:28)],use = "pairwise.complete")
+#correlacion[1,]
+
+
+# modelo regresion sin efectos espaciales
+library(lmtest) # para realizar diferetes test sobre regresión lineal
+
+modelo.lm1<-lm(TASA_PARO~RENTPCAP07, MUNIC_ESP@data)
+
+summary(modelo.lm1)
+
+# Como on datos de sección cruzada es posible tener problemas de Heterocedasticidad
+#lmtest::bptest(modelo.lm)# Ho: Ausencia de Heteroscedasticidad
+
+#library(sandwich)
+#modelo.lm.ro<-lmtest::coeftest(modelo.lm, vcov = vcovHC(modelo.lm, "HC0"))    # robust; HC0 
+#stargazer(modelo.lm, modelo.lm.ro, type="text")
+
+### test sobre efectos espaciales en los residuos
+
+# Guardo los residuos de cada Municipio
+MUNIC_ESP@data$lm.res<-resid(modelo.lm1) #he añadido en mi cartorafia una var adicional (los residuos)
+
+
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="PuBuGn",col = "lm.res",style = "quantile",n=5)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+
+
+
+
+#Si los residuos fuesen un ruido blanco deberían distribuirse de manera uniforma en todo el teritorio
+# no debería observarse relación espacial
+#EN ESTE GRAFICO ME SALEN BLANCOS LOS NEGATIVOSY AZULES LOS POSITIVOS NO SE DSTRIBUYEN ALEATORIAMENTE.
+#TENGO CONCENR5ARCION DE VALORES POSITIVOS DONDE TENIA TASSA DE PARO ALTAS Y AL REVES.
+#PARA ESTAR SEGUROS DE ESTO ACLCULO EL TEST DE MORAN
+
+
+# Indice de Moran sobre los residuos
+moran.lm1<-lm.morantest(modelo.lm1, W1, alternative="two.sided", zero.policy=TRUE)
+print(moran.lm1)
+#LA CORREL ESPACIAL DE LOS RESIDUOS ES 0.58 CASI LO MISMO QUE LA TASA DE PARO.
+#TENEMOS QEUE INCORPORAR LA DEP ESPACIAL EN MI MODELO(O BIEN EN EL TERMINO DE ERROR, O EN UNA VARIABLE RETARDADA, O MODELO DE DARWIN)
+#VAMOLS PROBANDO CON EL MODELO MAS SENCILLO: MODELO REGRESIVO ESPACIAL: AÑADE UN RETARDO DE LA PROPIA VARIABLE DEPENDIENTE(TASA DE PARO)
+
+####################################################
+
+#' ## Modelos de ecnometría Espacial
+formula_lm1<-formula(modelo.lm1)
+
+
+## SAR: Spatial lag Model ---------------
+
+
+
+# Se estima por Método Generalizado de los momentos (Ojo que tarda)
+#sar.lm<-lagsarlm(formula_lm, data=MUNIC_ESP@data, W,zero.policy = TRUE)
+#summary(sar.lm)
+
+#para corregir por heteroscedasticidad habría que utilizar la librería sphet
+#sar.lm<-sphet::spreg(formula_lm, data=MUNIC_ESP@data, listw=W, model="lag", het=TRUE)
+
+# o por Mínimos Cuadrados en dos etapas
+
+sar.tslm1<-stsls(formula_lm1, data = MUNIC_ESP@data, W1, zero.policy = TRUE,
+             na.action = na.fail, robust = TRUE, HC="HC1", legacy=FALSE, W2X = TRUE)
+summary(sar.tslm1) #
+#EL RHO ES EL COEFICINEETE ASOCIADO A LA VARIABLE DE RETARDO. EL COEF ES SIGNIFICATIVO, LO QUE QUIERE DECIR QUE EFECTIVAMENTE TENEMOS DEP ESPACIAL
+#HE CAPTADO TODA ESA DEPENDENCIA CON ESE COEFICICIENTE? NOLOSE, LO TENEMOS QUE VER EN LOS RESIDUOS
+
+# residuos del Spatial lag model
+
+# sar.res<-resid(sar.lm)
+sar.res1<-resid(sar.tslm1)
+names(sar.res1)
+
+
+# ¿En qué municipios te equivocas más y en qué municipios te equivocas menos, se ha eleiminado el problema de la 
+# autocorrelación espacial?
+
+MUNIC_ESP@data$sar.res<-resid(sar.tslm1) #residual Para poder dibujar los residuos
+
+
+tm_shape(MUNIC_ESP) +
+        tm_fill(palette ="PuBuGn",col = "sar.res",style = "quantile",n=5)+
+        tmap_options(check.and.fix = TRUE)+
+        tm_layout(frame = FALSE,
+                  legend.title.size = .7,
+                  legend.text.size =0.6,
+                  legend.position = c("right","bottom"),
+                  legend.bg.color = "white",
+                  legend.bg.alpha = 1,
+                  legend.stack = "horizontal",
+                  legend.width = 1.5,
+                  legend.height = 1.5)
+#AHORA ME APARECEN LOS RESIDUOS ALTERNADOS, VOLVEMOS A HACER EL TEST DE MORAN. ESPERO QUE ESTE TEST SEA NEGATIVO.
+
+
+# Indice de Moran sobre los residuos
+
+moran.test(resid(sar.tslm1), W1, alternative="greater", zero.policy=TRUE)
+moran.plot(resid(sar.tslm1),W1,zero.policy = TRUE) #MIS RESIDUOS TIENEN DEP NEGATIVA: SE DISTRIBUYEN DE VERDAD DE MANERA ALEATORIA
+moran.mc(resid(sar.tslm1),W1,zero.policy = TRUE, nsim=1000) #Estimaci?n de la I de moran con simulaci?n
+
+
+#  Impactos (OJO QUE TARDA MUCHO)
+# impacts(sar.lm, listw=W,zero.policy = TRUE )
+# impacts(sar.tslm, empirical = TRUE,listw=W,zero.policy = TRUE )
+
+
+# Posible explicación al fenómeno observado:
+
+boxplot(MUNIC_ESP@data$RENTPCAP07~cut(MUNIC_ESP@data$POB_2016,breaks = c(-Inf, 10000,25000,50000,100000,500000, Inf))) 
+boxplot(MUNIC_ESP@data$TASA_PARO~cut(MUNIC_ESP@data$POB_2016,breaks = c(-Inf, 10000,25000,50000,100000,500000, Inf)))        
+#LOS MUNICIPIOS MAS PEQUEÑOS TIENEN TASA DE PARO AMS PEQUEÑA(SEGURAMENT EPORQ LA GENTE SE HA IDO A MUNICIPIOS MAS GRANDES)
+
+
+
+datosCutPob= MUNIC_ESP@data %>% 
+        group_by(cut(POB_2016,breaks = c(-Inf, 10000,25000,50000,100000,500000, Inf))) %>% 
+        summarise(mediaRenta=mean(RENTPCAP07, na.rm=TRUE), mediaTASAPARO=mean(TASA_PARO, na.rm=TRUE))
+
+plot(mediaTASAPARO~mediaRenta, data=datosCutPob, pch=19 )
+ abline(lm(mediaTASAPARO~mediaRenta, data=datosCutPob))
+
+
+
+ 
+####################################################################################################
+#' ***
+#' # Otros Modelos Espaciales - Ver Tabla en la presentación 
+
+
+# Estimación de Todos los modelos con librería spatialreg
+
+# m=0 MCO ###########
+modelo.lm<-lm(TASA_PARO~RENTPCAP07, MUNIC_ESP@data)
+summary(modelo.lm)
+AIC(modelo.lm)
+save(lagsarmodel, file="m0_modelo.lm.Rdata")
+
+formula_lm<-formula(modelo.lm)
+
+
+# m=1 Spatial lag model ############
+lagsarmodel<-spatialreg::lagsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                  na.action = na.fail,Durbin = FALSE)
+summary(lagsarmodel)
+save(lagsarmodel, file="m1_lagsarmodel.Rdata")
+
+
+# m=2 Spatial Durbin model ###########
+SpatialDurbin<-spatialreg::lagsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                    na.action = na.fail,Durbin = TRUE)
+summary(SpatialDurbin)
+save(SpatialDurbin, file="m2_SpatialDurbin.Rdata")
+
+
+# m=3 Spatial laged Xmodel ###########
+SpatialLagX<-spatialreg::lmSLX(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                               na.action = na.fail, Durbin = TRUE)
+summary(SpatialLagX)
+AIC(SpatialLagX)
+save(SpatialLagX, file="m3_SpatialLagX.Rdata")
+
+
+# m=4 Spatial error model ###########
+Spatialerror<-spatialreg::errorsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                     na.action = na.fail,Durbin = FALSE)
+summary(Spatialerror)
+save(Spatialerror, file="m4_Spatialerror.Rdata")
+
+
+# m=5 Spatial Durbin error model ###########
+SpatialDurbinerror<-spatialreg::errorsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                           na.action = na.fail,Durbin = TRUE)
+summary(SpatialDurbinerror)
+save(SpatialDurbinerror, file="m5_SpatialDurbinerror.Rdata")
+
+
+# m=6 Spatial SACSAR model (Kalejian-Prucha) ###########
+SpatialSACSAR<-spatialreg::sacsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                    na.action = na.fail,Durbin = FALSE)
+summary(SpatialSACSAR)
+save(SpatialSACSAR, file="m6_SpatialSACSAR.Rdata")
+
+
+# m=7 Spatial SACSAR Durbin model (Manski) ###########
+SpatialSACSARDurbin<-spatialreg::sacsarlm(formula_lm, data = MUNIC_ESP@data, W, zero.policy = TRUE,
+                                          na.action = na.fail,Durbin = TRUE)
+summary(SpatialSACSARDurbin)
+save(SpatialSACSARDurbin, file="m7_SpatialSACSARDurbin.Rdata")
+
+
+###########################################################################
+## SEM: Spatial Error Model Por mínimos Cuadrados Generalizado Factibles (Tarda menos)
+
+# modelo 4 SEM Spatial erro model
+# por Método Generalizado de los momentos (Ojo que tarda)
+#errorsar.lm<-errorsarlm(formula_lm, data=MUNIC_ESP@data, W,zero.policy = TRUE)
+#summary(errorsar.lm)
+
+# o corrigiendo por heterocedassticidad
+#errorsar.lm<-sphet::spreg(formula_lm, data=MUNIC_ESP@data, listw=W, model="error", het=TRUE)
+#summary(errorsar.lm)
+
+
+# o por Feasible Generalized Least Squares (GLS) with the function GMerrorsar.
+errorsar.fgls<-GMerrorsar(formula_lm, data=MUNIC_ESP@data, W,zero.policy = TRUE)
+summary(errorsar.fgls)
+
+
+# PARA HACER GRAFICO DE MUNICIPIOS
+# ¿En qué municipios te equivocas más y en qué municipios te equivocas menos?
+
+#MUNIC_ESP@data$errorsar.res<-resid(errorsar.lm) #residual PAra poder dibujar los residuos
+MUNIC_ESP@data$errorsar.res<-resid(errorsar.fgls) #residual PAra poder dibujar los residuos
+
+ColorBr="PuBuGn"
+nombrevbles<-"errorsar.res"
+par(mar=c(0,0,0,0))
+breaks<-classIntervals(eval(parse(text=paste("MUNIC_ESP$",noquote(nombrevbles),sep=""))), 9, style="quantile")
+color <- findColours(breaks,palette(brewer.pal(5, ColorBr)))
+leg <- findColours(classIntervals(round(eval(parse(text=paste("MUNIC_ESP$",noquote(nombrevbles),sep=""))), digits=2), 5, style="quantile"),
+                   palette(brewer.pal(5, ColorBr)),under="menor que", over="mayor que", between="-", digits=0,cutlabels=FALSE)
+#
+color <- findColours(breaks,palette(brewer.pal(5, ColorBr)))
+leg <- findColours(classIntervals(round(eval(parse(text=paste("MUNIC_ESP$",noquote(nombrevbles),sep=""))), digits=2), 5, style="quantile"),
+                   palette(brewer.pal(5, ColorBr)),under="menor que", over="mayor que", between="-", digits=0,cutlabels=FALSE)
+#
+plot(MUNIC_ESP,col = color,lty=1, border=NA,lwd=0.25, add=F,  axes=F, pch = 19,xlim=c(xmin,xmax), ylim=c(ymin,ymax))
+legend(x = -0.75,y = 37,fill=attr(leg, "palette"),
+       legend=names(attr(leg,"table")),
+       title = nombrevbles, cex=0.6, box.lty=0, border = 0)
+
+par(mar=c(2,2,2,2))
+
+
+# Indice de Moran sobre los residuos
+moran.test(resid(errorsar.fgls), W, alternative="greater", zero.policy=TRUE)
+moran.plot(resid(errorsar.fgls),W,zero.policy = TRUE)
+moran.mc(resid(errorsar.fgls),W,zero.policy = TRUE, nsim=1000) #Estimaci?n de la I de moran con simulaci?n
+
+#############################################################################
+
+# RESUMEN de MODELOS
+summary(modelo.lm)
+#summary(sar.lm)
+summary(sar.tslm)
+#summary(errorsar.lm)
+summary(errorsar.fgls)
+
+
+
+# y comó saber qué modelo es mejor???????
+#' ## Test sobre los modelos espaciales (ANSELIN)
+# test LM para elegir entre el Spatial LAg (SAR) y el Spatial ERR(SEM)
+LM<-lm.LMtests(modelo.lm, W, test="all", zero.policy=TRUE)
+print(LM)
+
+
+# Impactos (OJO QUE TARDA MUCHO)
+#impacts(sar.lm, listw=W,zero.policy = TRUE )
+#impacts(sar.tslm, listw=W,zero.policy = TRUE )
+
+
+############################################################################
+####### OTROS MODELOS
+
+
+# GMM SARAR
+#gs2sls <- gstsls(form, data = data_set,listw = lw)
+#sarar_het<-spreg(form, data = data_set,listw = lw, model = "sarar", het=TRUE)
+
+# GMM lag endog
+#spreg_lag_endog_het<-spreg(form1, data = data_set,  listw = lw, endog = ~police, instruments = ~elect, model = "lag", het=TRUE, lag.instr = TRUE)
+
+# GMM error endog
+#spreg_error_endog_het<-spreg(form1, data = data_set,  listw = lw, endog = ~police, instruments = ~elect, model = "error", het=TRUE, lag.instr = TRUE)
+
+# GMM sarar endog
+#spreg_sarar_endog_het<-spreg(form1, data = data_set,  listw = lw, endog = ~police, instruments = ~elect, model = "sarar", het=TRUE, lag.instr = TRUE)
+
+
+# ML lag mirar library(McSpatial) y el ejemplo en Biban Piras
+
+# library(spse) # Spatial Simultaneous Equations and Spatial Sur Model
+
+
+
+######PREDECIR PRECIO DE LA VIVIENDA
+#REPRESENTAR EN EL MAPA DE MADRID CADA VIVIENDA CON UN PUNTO
+#GRAFICO DE DENSIDAD 2 DMENSIONES(NOAHCER)
+#COMO TENGOL PUNTOS VEMOS SI HAY DEP ESPACIAL O NO
+#DE Q DEPENDE EL PRECIO DE LA VIVIENDA: BNUMERO BAÑOS, HABITACIONES, METROS CUADRADOS, OTRAS CARACT(CHALET, PISO, ALTURA, GARAJE, PORTERO ETC)
+#COMO TENGO LAS COORD GEOGRAF DE CADA VIVIENDA, INTENTAR MEDIR SI TENGO DEP ESPACIAL ¿COMO? LEY DE MROAAN: NECESITO EL PRECIO DE LA VIVIENDA RETARDADA PARA HACER GRAFICO DE DISPERSION.
+#PARA VER SIE LP RECIO DE LA VIVIENDA ESTA CORRELACIONADA CON LAS DE ALREDEDOR
+#MAT5RIZ REINA: NO PUEDO CONTINUIDAD NO SE PUEDE.
+#QUE SE UTILIZA? UTILIZAR DISTANCIAS.
+#UNA VEZ Q TENGA MATRIZ DE PESOS CALCULAMOS LEY DE MORAN
+#MIRAMOS SI LOS RESIDU9OS TIENEN  DEP ESPACIAL O NO.
+#HACEMOS MODELO AMS SENCILLO CON RETARDO DE LA VAR DEPENDIENTE.
+
+#QUIERO PREDECIR EL VAOR DE UNA VIVIENDA TENGO SU POSICION, QUE NECESITO? SUS CARACTERISTICAS Y EL VALOR DE LAS VIVIENDAS DE ALREDEDOR, RESRVAR 100 VIVIENDAS PARA NTEST,
