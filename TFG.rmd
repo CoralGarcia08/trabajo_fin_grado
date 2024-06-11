@@ -1,0 +1,833 @@
+---
+title: "tfg"
+author: "Coral García Cardeñas"
+date: "2024-05-25"
+output:
+  word_document: default
+  html_document: default
+---
+```{r}
+# Librerías
+library(idealista18)
+library(sphet)
+library(spatialreg)
+library(spdep)
+library(sf)
+library(lmtest)
+library(stargazer) #
+library(tidyverse)
+library(dplyr) # para mutate()
+library(tmap)
+library(corrplot)
+library(caTools)
+library(car)
+library(leaflet)
+```
+
+
+```{r}
+# Lectura de datos
+df_raw <- Madrid_Sale
+polygons <- Madrid_Polygons
+madrid_pois <- Madrid_POIS
+```
+
+```{r}
+# Variables numéricas a categóricas
+names(df_raw)
+str(df_raw)
+
+num_a_cat <- c("PERIOD", "HASTERRACE", "HASLIFT", "HASAIRCONDITIONING", "AMENITYID", "HASPARKINGSPACE",
+               "ISPARKINGSPACEINCLUDEDINPRICE", "HASNORTHORIENTATION", "HASSOUTHORIENTATION", "HASEASTORIENTATION", 
+               "HASWESTORIENTATION", "HASBOXROOM", "HASWARDROBE", "HASSWIMMINGPOOL", "HASDOORMAN", "HASGARDEN", "ISDUPLEX", 
+               "ISSTUDIO", "ISINTOPFLOOR", "CADASTRALQUALITYID", "BUILTTYPEID_1", "BUILTTYPEID_2", "BUILTTYPEID_3", "ROOMNUMBER", "BATHNUMBER","FLATLOCATIONID")
+
+df_raw <- df_raw %>%
+  mutate(across(all_of(num_a_cat), as.factor))
+
+df_sin_geom <- st_drop_geometry(df_raw)
+```
+
+```{r}
+num_cols <- names(df_raw)[sapply(df_raw, is.numeric)]
+num_cols_price <- num_cols[!(num_cols %in% c("LONGITUDE", "LATITUDE"))]
+num_cols <- num_cols_price[!(num_cols_price %in% c("PRICE"))]
+cat_cols <- names(df_raw)[!sapply(df_raw, is.numeric)]
+```
+
+
+```{r}
+# Eliminar duplicados según ASSETID
+duplicated_count <- sum(duplicated(df_raw$ASSETID))
+df_no_duplicates <- df_raw[!duplicated(df_raw$ASSETID), ]
+```
+
+
+
+
+
+```{r}
+# Estadísticos variables numéricas
+summary(df_no_duplicates[num_cols_price])
+```
+
+
+```{r}
+# Crear un gráfico de barras para la distribución de PRICE
+# options(scipen = 999)
+gd <- ggplot(df_no_duplicates, aes(x = PRICE)) +
+        geom_density(fill = "lightsteelblue2", alpha = 0.5) +
+        labs(title = "Distribución de precios de viviendas",
+          x = "Precio",
+          y = "Densidad"
+        ) +
+        # theme_minimal() + 
+        theme(panel.grid = element_blank(),
+              panel.background = element_rect(fill = "transparent"))
+gd
+ggsave("imagenes/f_densidad_precios.png", plot = gd, width = 8, height = 6, dpi = 300)
+```
+
+
+
+
+
+```{r}
+# Precio medio por año
+avg_price_year <- aggregate(PRICE ~ CADCONSTRUCTIONYEAR, df_no_duplicates, FUN = mean)
+
+plot(avg_price_year$CADCONSTRUCTIONYEAR, avg_price_year$PRICE,
+     type = "p", col = "blue", xlab = "Año de construcción",
+     cex.axis = 0.8,
+     #cex.names = 0.8,
+     ylab = "Precio medio",
+     main = "Tendencia del precio medio por año")
+
+abline(lm(avg_price_year$PRICE ~ avg_price_year$CADCONSTRUCTIONYEAR), col = "red")
+```
+
+
+```{r}
+# Estadísticos variables categóricas
+summary(df_no_duplicates[cat_cols])
+
+g1 <- ggplot(df_no_duplicates, aes(x = AMENITYID)) +
+  geom_bar(fill = "lightsteelblue1", color = "black") +
+  labs(title = "Distribución AMENITYID", y = "Frecuencia") + 
+  scale_x_discrete(labels = c("Sin amueblar", "Sólo cocina", "Amueblado")) +
+  geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")), 
+            vjust = -0.5, size = 3) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "transparent"))
+
+g2 <- ggplot(df_no_duplicates, aes(x = CADASTRALQUALITYID)) +
+  geom_bar(fill = "lightsteelblue1", color = "black") +
+  labs(title = "Distribución CADASTRALQUALITYID", y = "Frecuencia") +
+  geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")), 
+            vjust = -0.5, size = 3) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "transparent"))
+
+
+g3 <- ggplot(df_no_duplicates, aes(x = ROOMNUMBER)) +
+  geom_bar(fill = "lightsteelblue1", color = "black") +
+  labs(title = "Distribución ROOMNUMBER", y = "Frecuencia") +
+  geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")), 
+            vjust = -0.5, size = 3) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "transparent"))
+
+
+g4 <- ggplot(df_no_duplicates, aes(x = BATHNUMBER)) +
+  geom_bar(fill = "lightsteelblue1", color = "black") +
+  labs(title = "Distribución BATHNUMBER", y = "Frecuencia") +
+  geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")), 
+            vjust = -0.5, size = 3) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "transparent"))
+
+ggplot(df_no_duplicates, aes(x = CADASTRALQUALITYID)) +
+  geom_bar(fill = "lightsteelblue1", color = "black") +
+  labs(title = "Distribución CADASTRALQUALITYID", y = "Frecuencia") +
+  geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")), 
+            vjust = -0.5, size = 3) +
+  theme(panel.grid = element_blank(),
+        panel.background = element_rect(fill = "transparent"))
+# df_rooms <- df_no_duplicates %>%
+#   mutate(Category = "Rooms", count = ROOMNUMBER)
+# 
+# df_baths <- df_no_duplicates %>%
+#   mutate(Category = "Baths", count = BATHNUMBER)
+# 
+# df_combined <- bind_rows(df_rooms, df_baths)
+# 
+# g3 <- ggplot(df_combined, aes(x = count, fill = Category)) +
+#   geom_bar(position = "dodge", color = "black") +
+#   labs(title = "Número de habitaciones y baños por observación", y = "Frecuencia") +
+#   geom_text(stat = 'count', aes(label = paste0(round((..count..) / sum(..count..) * 100, 1), "%")),
+#             position = position_dodge(width = 0.9), vjust = -0.5, size = 3) +
+#   scale_fill_manual(values = c("Rooms" = "deepskyblue3", "Baths" = "lightcoral")) +
+#   theme(panel.grid = element_blank(),
+#         panel.background = element_rect(fill = "transparent"))
+
+
+ggsave("imagenes/amenityid.png", plot = g1, width = 8, height = 6, dpi = 300)
+ggsave("imagenes/cadastralquality.png", plot = g2, width = 8, height = 6, dpi = 300)
+ggsave("imagenes/rooms.png", plot = g3, width = 5, height = 6, dpi = 300)
+ggsave("imagenes/baths.png", plot = g4, width = 5, height = 6, dpi = 300)
+```
+
+
+
+```{r}
+# observations_0_rooms <- sum(df_no_duplicates$ROOMNUMBER == 0, na.rm = TRUE)
+# data_0_rooms <- subset(df_no_duplicates, ROOMNUMBER == 0)
+# observations_isstudio_1 <- sum(data_0_rooms$ISSTUDIO == 1, na.rm = TRUE)
+# proporcion <- observations_isstudio_1 / observations_0_rooms * 100
+# 
+# cat("Número de observaciones con 0 habitaciones e isstudio == 1:", observations_isstudio_1, "\n")
+# cat("Proporción respecto al total de observaciones con 0 habitaciones:", proporcion, "%")
+```
+
+
+### DEPURACION
+
+```{r}
+# Filtrar viviendas con precio menor de 2000000
+df_no_duplicates <- df_no_duplicates[(df_no_duplicates$PRICE < 2000000),]
+```
+
+
+```{r}
+# Eliminar variables no relevantes
+df_dep <- subset(df_no_duplicates, select = -c(ASSETID, UNITPRICE, PERIOD, CONSTRUCTIONYEAR, PARKINGSPACEPRICE,AMENITYID))
+num_cols <- num_cols[!(num_cols %in% c("UNITPRICE", "CONSTRUCTIONYEAR", "PARKINGSPACEPRICE"))]
+num_cols_price <- num_cols_price[!(num_cols_price %in% c("UNITPRICE", "CONSTRUCTIONYEAR", "PARKINGSPACEPRICE"))]
+cat_cols <- cat_cols[!(cat_cols %in% c("ASSETID", "PERIOD", "AMENITYID"))]
+### Faltaría eliminar buildtypeid_3
+```
+
+
+```{r}
+#Eliminar valores NA
+df_dep <- na.omit(df_dep)
+
+df_dep$ROOMNUMBER <- as.numeric(df_dep$ROOMNUMBER)
+df_dep <- subset(df_dep, ROOMNUMBER <= 8)
+df_dep$ROOMNUMBER <- cut(df_dep$ROOMNUMBER, 
+                         breaks = c(-Inf,1, 2, 3, 4, 5, Inf), 
+                         labels = c("0", "1", "2", "3", "4", "5 or more"))
+df_dep$ROOMNUMBER <- factor(df_dep$ROOMNUMBER)
+
+# Eliminar observaciones con 0 baños usando subset
+df_dep$BATHNUMBER <- as.numeric(df_dep$BATHNUMBER)
+df_dep <- subset(df_dep, BATHNUMBER != 0 | BATHNUMBER <= 8)
+df_dep$BATHNUMBER <- cut(df_dep$BATHNUMBER,
+                                          breaks = c(-Inf, 2, 3, 4, 5, Inf),
+                                          labels = c("1", "2", "3", "4", "5 or more"))
+df_dep$BATHNUMBER <- factor(df_dep$BATHNUMBER)
+
+df_dep$CADASTRALQUALITYID <- as.numeric(df_dep$CADASTRALQUALITYID)
+df_dep$CADASTRALQUALITYID <- cut(df_dep$CADASTRALQUALITYID,
+                                   breaks = c(-Inf, 5, Inf),
+                                 labels = c("0_4", "5_9"))
+df_dep$CADASTRALQUALITYID <- factor(df_dep$CADASTRALQUALITYID)
+```
+
+
+```{r}
+# Analisis de outliers
+outliers <- function(col){
+  bp <- boxplot.stats(col)
+  
+  # Obtener límites para identificar outliers
+  lower_limit <- bp$stats[2] - 3 * IQR(col)
+  upper_limit <- bp$stats[4] + 3 * IQR(col)
+  
+  # Calcular porcentaje de outliers
+  outliers <- sum(col < lower_limit | col > upper_limit)
+  porcentaje <- round(outliers / length(col) * 100, 2)
+}
+
+# Inicializar vectores para almacenar nombres y porcentajes de outliers
+outliers_percentage <- vector("numeric", length = length(num_cols))
+var_names <- vector("character", length = length(num_cols))
+
+# Calcular porcentajes de outliers para las variables numéricas excluyendo "price"
+for (i in seq_along(num_cols)) {
+  var_names[i] <- num_cols[i]
+  outliers_percentage[i] <- outliers(df_dep[[num_cols[i]]])
+}
+
+# Imprimir los nombres de las variables y porcentajes de outliers
+for (i in seq_along(var_names)) {
+  cat("Variable:", var_names[i], "- Porcentaje de outliers:", outliers_percentage[i], "%\n")
+}
+
+outliers_data <- data.frame(variable = var_names, porcentaje_outliers = outliers_percentage)
+
+gg <- ggplot(outliers_data, aes(x = porcentaje_outliers, y = fct_reorder(variable, porcentaje_outliers))) +
+  geom_bar(stat = "identity", fill = "lightsteelblue1", color = "black") +
+  labs(title = "Porcentaje de Outliers por Variable", x = "Porcentaje de Outliers", y = "Variabl
+e") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) +
+  geom_text(aes(label = paste0(porcentaje_outliers, "%")), hjust = -0.2, size = 3)
+
+ggsave("imagenes/porcentaje_outliers.png", plot = gg, width = 10, height = 6, 
+       dpi = 300)
+#file.show("imagenes/porcentaje_outliers.png")
+
+remove_outliers <- function(df){
+  for (col in var_names) {
+    bp <- boxplot.stats(df[[col]])
+    lower_limit <- bp$stats[2] - 3 * IQR(df[[col]])
+    upper_limit <- bp$stats[4] + 3 * IQR(df[[col]])
+    
+    # Eliminar outliers
+    df[[col]][df[[col]] < lower_limit | df[[col]] > upper_limit] <- NA
+  }
+  df <- na.omit(df)
+  # Devolver el dataframe con outliers eliminados
+  return(df)
+}
+
+df_final <- remove_outliers(df_dep)
+#write.csv(df_final, "df_final.csv", row.names = FALSE)
+```
+
+```{r}
+# Calcular la matriz de correlaciones
+#matriz_correlaciones <- cor(df_final[num_cols])
+
+df_numeric <- df_final[, num_cols]
+df_numeric <- df_numeric[, !(names(df_numeric) %in% c("PRICE", "LONGITUDE", "LATITUDE"))]
+df_numeric <- st_drop_geometry(df_numeric)
+matriz_correlaciones <- cor(df_numeric)
+
+corrplot(matriz_correlaciones, method = "color", addCoef.col = 'black',
+         tl.cex = 0.7, cl.cex = 0.7, type = "lower", tl.col = "black")
+# Podríamos eliminar distance_to_castellana
+```
+
+
+```{r}
+set.seed(123)
+df_sample <- df_final[sample(nrow(df_final),3000),]
+```
+
+
+### ANALISIS EXPLORATORIO DE DATOS ESPACIALES 
+#### MAPA CLOROPLETICO PRECIO MEDIO POR DISTRITO
+
+```{r}
+district <- st_read("C:/Users/Coral/Desktop/TFG/trabajo_fin_grado/Distritos.shp")
+
+district <- st_transform(district, st_crs(df_no_duplicates))
+viviendas_con_distrito <- st_join(df_no_duplicates, district, join = st_within)
+
+avg_price_district <- viviendas_con_distrito %>%
+  group_by(NOMBRE) %>%  # Asumiendo que 'NOMBRE' es el nombre del distrito
+  summarize(avg_price = mean(UNITPRICE, na.rm = TRUE))
+
+merged_data <- st_join(district, avg_price_district, join = st_intersects)
+
+
+mapa <- ggplot(merged_data) +
+  geom_sf(aes(fill = avg_price), color = "white", linetype = 1, lwd = 0.25) +
+  geom_sf_text(aes(label = paste(NOMBRE.x, "\n", round(avg_price))), size = 2.7) +
+  scale_fill_gradient(low = "lemonchiffon", high = "springgreen4", name = expression("Precio medio de la vivienda (€/m"^2*")")) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = c(0.4, 1),
+    legend.justification = c("right", "top"),
+    legend.key.size = unit(0.4, "cm"),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 9),
+  ) +
+  labs(
+    title = "Precio medio por distrito de Madrid (año 2018)",
+    caption = "Fuente: Elaboración propia"
+  )
+
+ggsave("imagenes/mapachulo.png", plot = mapa, width = 10, height = 7.8, dpi = 300)
+```
+
+
+
+```{r}
+# summary(polygons)
+# summary(df_sample)
+### Visualización de datos espaciales 
+
+datos_map <-df_sample[sample(nrow(df_sample), 500),]
+precios<-datos_map$PRICE
+
+getColor <- function(precios_nor){
+  sapply(scale(precios_nor), function(tip) {
+    if(tip <= -0.5) {
+      "green"
+    } else if(tip <= 0.75) {
+      "orange"
+    } else {
+      "red"
+    } })
+}
+
+icons <- awesomeIcons(
+  icon = 'ios-close',
+  iconColor = 'black',
+  library = 'ion',
+  markerColor = getColor(log(precios))
+)
+
+leaflet(datos_map)%>%
+  addTiles() %>%
+  addAwesomeMarkers(lng=~LONGITUDE,
+                    lat=~LATITUDE,
+                    icon=icons,
+                    label=~paste0(PRICE, " euros"),
+                    popup=~paste0(PRICE, " euros"))
+
+# tmap_mode("plot")
+
+ # tm_shape(df_final) +
+ #   tm_symbols(col = "PRICE",
+ #              palette = "YlGn", style = "quantile",
+ #              title.col = "Precio (€)",
+ #              size = 0.5
+ #              ) +
+ #   tmap_options(check.and.fix = TRUE) +
+ #  tm_basemap("OpenStreetMap") +
+ #  tm_layout(title = "Distribución de precios de viviendas",
+ #            legend.outside = TRUE,
+ #             title.size = 6)
+ # 
+ # tm_shape(polygons) +
+ #   tm_polygons() +
+ #   tm_shape(df_final) +
+ #    tm_dots("PRICE",
+ #            style = "quantile",
+ #            n = 8,
+ #            palette = "GnBu",
+ #            title = "Precio de la vivienda",
+ #            size = 0.1
+ #            ) +
+ #    tm_layout(legend.outside = TRUE,
+ #              legend.outside.position = "right",
+ #              legend.text.size = 0.8,
+ #              legend.title.size = 1,
+ #              frame = FALSE)
+
+tm_shape(polygons) +
+  tm_polygons() +
+  tm_shape(df_sample) +
+  tm_dots("CADCONSTRUCTIONYEAR", 
+          style = "quantile", 
+          n = 8, 
+          palette = "Oranges", 
+          title = "Año de construcción", 
+          size = 0.1
+  ) +
+  tm_layout(legend.outside = TRUE, 
+            legend.outside.position = "right", 
+            legend.text.size = 0.8, 
+            legend.title.size = 1.3,
+            frame = FALSE)
+
+
+
+cor(df_sample$PRICE, df_sample$CADCONSTRUCTIONYEAR)
+```
+
+
+```{r}
+df_sf <- st_as_sf(df_sample, coords = c("LONGITUDE", "LATITUDE"), crs = st_crs("+proj=longlat +datum=WGS84"))
+```
+
+```{r}
+coords <- cbind(df_sf$LONGITUDE, df_sf$LATITUDE)
+```
+
+
+```{r}
+# dists <- as.vector(dist(coords))
+# hist(dists, breaks = 100, main = "Histograma de Distancias", xlab = "Distancia (km)")
+```
+
+
+
+### INVERSA A LA DISTANCIA
+```{r}
+# Distancia entre 0 y 0.5 Kms
+lista_v <- dnearneigh(coords, 0, 0.5, longlat = TRUE) # distancia en Km
+
+no_neigh_idx <- which(card(lista_v) == 0)
+df_sf_filtered <- df_sf[-no_neigh_idx, ]
+coords_filtered <- st_coordinates(df_sf_filtered)
+
+lista_v2 <- dnearneigh(coords_filtered, 0, 0.5, longlat = TRUE)
+dists <- nbdists(lista_v2, coords_filtered)
+dinv_dist <- lapply(dists, function(x) 1/(x^2))
+
+# l. aNSELIN
+
+# y ahora la matriz de pesos (que cambia respecto a las anteriores de lista de vecinos)
+dinvs_W <- nb2listw(lista_v2, glist=dinv_dist, style="W",zero.policy=TRUE)
+
+wm<-listw2mat(dinvs_W)
+dim(wm)
+```
+
+
+#### EXISTENCIA AUTOCORRELACION ESPACIAL 
+
+######  A) INDICE DE MORAN
+```{r}
+ind_Moran_k <- moran.test(df_sf_filtered$PRICE, listw = dinvs_W,
+                          alternative = "two.side")
+ind_Moran_k #autocorr positiva y estadisticamente significativa
+
+#I de Moran:
+#-1: correlación espacial perfecta negativa
+#0: Ho: ausencia de correlación espacial
+#1: correlación espacial perfecta positiva
+
+### PRUEBA DEL ESTADISTICO I DE MORAN
+moran.mc(df_sf_filtered$PRICE, listw = dinvs_W, nsim=999) #se muestran agrupaciones significativas
+```
+######  B) PRUEBA C DE GEARY
+
+```{r}
+c_geary_k = geary.test(df_sf_filtered$PRICE, listw = dinvs_W,
+                       alternative = "two.side")
+c_geary_k # estadistico 0.388 < 1 confirma la existencia de autocorrelacion positiva
+
+### PRUEBA DEL ESTADISTICO C DE GEARY
+geary.mc(df_sf_filtered$PRICE, listw = dinvs_W, nsim = 999)
+```
+
+
+######  C) PRUEBA G(d) DE GETIS Y ORD. H0: NO AUTOCORRELACION ESPACIAL
+```{r}
+g_getis_k = globalG.test(df_sf_filtered$PRICE, listw = dinvs_W, 
+                         alternative = "two.side")
+g_getis_k
+
+# pvalor < 0 -> rech H0 de ausencia de autocorrelacion
+```
+```{r}
+scatterplot_moran = moran.plot(df_sf_filtered$PRICE, listw = dinvs_W, main = "Scatterplot de Moran para los precios")
+```
+
+
+####  REPRESENTACION GRAFICA DE LA DEPENDENCIA ESPACIAL
+
+```{r}
+############################################################
+############ RETARDO ESPACIAL DE LOS PRECIOS ###############
+############################################################
+
+df_sf_filtered$PRICEW <- spdep::lag.listw(x = dinvs_W, var = df_sf_filtered$PRICE)
+
+summary(df_sf_filtered$PRICE)
+summary(df_sf_filtered$PRICEW)
+
+##histogramas superpuestos
+
+table(is.na(df_sf_filtered$PRICEW))
+
+
+par(mfrow = c(2, 1)) # Organizar la disposición de los gráficos en 2 filas y 1 columna
+
+# Histograma superpuesto
+hist(df_sf_filtered$PRICE, breaks = 50, col = "green3", 
+     main = "Histograma de PRICE vs PRICEW", 
+     xlab = "Precio vivienda", xlim = range(c(df_sf_filtered$PRICE, df_sf_filtered$PRICEW)), 
+     freq = FALSE)
+hist(df_sf_filtered$PRICEW, breaks = 50, col = "orange", add = TRUE, freq = FALSE)
+legend("topright", legend = c("PRICE", "PRICEW"), fill = c("green3", "orange"))
+
+# Densidades superpuestas
+plot(density(df_sf_filtered$PRICEW), col = "orange", lwd = 2, main = "Densidad de PRICE vs PRICEW", xlab = "Precio vivienda")
+lines(density(df_sf_filtered$PRICE), col = "green3", lwd = 2)
+legend("topright", col = c("orange", "green3"), legend = c("PRICEW", "PRICE"), lty = 1, lwd = 2)
+
+
+#tmap_mode("view")
+tmap_arrange(
+  tm_shape(df_sf_filtered) +
+    tm_symbols(palette ="YlGn",col = "PRICE",style = "quantile", size = 0.5)+
+    tmap_options(check.and.fix = TRUE),
+  tm_shape(df_sf_filtered) +
+    tm_symbols(palette ="YlGn",col = "PRICEW",style = "quantile", size = 0.5)+
+    tmap_options(check.and.fix = TRUE),
+  nrow=1
+)
+```
+
+
+```{r}
+cor.test(df_sf_filtered$PRICEW,df_sf_filtered$PRICE) # Coeficiente de Correlación
+```
+
+
+### CORRELACION ESPACIAL LOCAL Y GLOBAL 
+
+
+```{r}
+gLocal <- localG(df_sf_filtered$PRICE, dinvs_W, zero.policy = TRUE) # Getis-Ord Statistics
+summary(gLocal)
+
+
+lmoran <- localmoran(df_sf_filtered$PRICE, dinvs_W, zero.policy = TRUE)  # I de moran local (para cada poligono)
+summary(lmoran) 
+
+df_sf_filtered$lmoran<-lmoran[,5]
+df_sf_filtered$quad_sig <- NA
+
+df_sf_filtered$PRICE_TIP<-scale(df_sf_filtered$PRICE)
+df_sf_filtered$PRICEW_TIP<-scale(df_sf_filtered$PRICEW)
+hist(df_sf_filtered$PRICEW_TIP)
+
+
+
+# high-high quadrant
+df_sf_filtered$quad_sig[(df_sf_filtered$PRICE_TIP >= 0 & df_sf_filtered$PRICEW_TIP >= 0 & 
+                              df_sf_filtered$lmoran <= 0.05)] <- "high-high"
+# low-low quadrant
+df_sf_filtered$quad_sig[(df_sf_filtered$PRICE_TIP <= 0 & 
+                     df_sf_filtered$PRICEW_TIP<= 0 & 
+                       df_sf_filtered$lmoran <= 0.05)] <- "low-low"
+
+# high-low quadrant
+df_sf_filtered$quad_sig[(df_sf_filtered$PRICE_TIP >= 0 & 
+                              df_sf_filtered$PRICEW_TIP <= 0 & 
+                              df_sf_filtered$lmoran <= 0.05)] <-  "high-low"
+
+
+# low-high quadrant
+df_sf_filtered$quad_sig[(df_sf_filtered$PRICE_TIP <= 0 & 
+                              df_sf_filtered$PRICEW_TIP >= 0 & 
+                              df_sf_filtered$lmoran <= 0.05)] <-  "low-high"
+
+# non-significant observations
+df_sf_filtered$quad_sig[df_sf_filtered$lmoran > 0.05] <-  "not signif."
+
+names(table(df_sf_filtered$quad_sig))
+
+df_sf_filtered$quad_sig <- as.factor(df_sf_filtered$quad_sig)
+
+tm_shape(df_sf_filtered) +
+  tm_symbols(palette ="Set1", col = "quad_sig", style = "pretty", n=5, size = 0.5)+
+  tmap_options(check.and.fix = TRUE)
+  #+ tm_layout(frame = FALSE,
+  #           legend.title.size = .7,
+  #           legend.text.size =0.6,
+  #           legend.position = c("right","bottom"),
+  #           legend.bg.color = "white",
+  #           legend.bg.alpha = 1,
+  #           legend.stack = "horizontal",
+  #           legend.width = 1.5,
+  #           legend.height = 1.5)
+
+# tmap_save(map_TparoW, filename="graficoTasa de ParoW.jpeg", width=15, height=10, units="cm",dpi = 600, bg ="transparent", quality = 100)
+
+# tenemos high high dependencia espacial positiva (precios altos)
+# low low : mroado: dep espacial local significativa (precios bajos)
+##hasta q no inbclouya la dep espacial en mi modelo, mimodeo oestara sesgado
+```
+
+
+# MODELADO DE DATOS ESPACIALES 
+
+### MODELO DE REGRESION SIN EFECTOS ESPACIALES (MCO)
+```{r}
+paste(names(df_sf_filtered), collapse = " + ")
+
+formula <- PRICE ~ CONSTRUCTEDAREA + ROOMNUMBER +BATHNUMBER + HASTERRACE + HASLIFT + HASAIRCONDITIONING + HASPARKINGSPACE + HASNORTHORIENTATION + HASSOUTHORIENTATION + HASEASTORIENTATION + HASWESTORIENTATION + HASBOXROOM + HASWARDROBE + HASSWIMMINGPOOL + HASDOORMAN + HASGARDEN + ISDUPLEX + ISSTUDIO + ISINTOPFLOOR + FLOORCLEAN + FLATLOCATIONID + CADCONSTRUCTIONYEAR + CADMAXBUILDINGFLOOR + CADDWELLINGCOUNT + CADASTRALQUALITYID + BUILTTYPEID_1 + BUILTTYPEID_2 + DISTANCE_TO_CITY_CENTER + DISTANCE_TO_METRO + DISTANCE_TO_CASTELLANA
+# quitamos ISPARKINGINCLUDEINPRICE Y BUILTYPEID_3
+modelo.lm<-lm(formula, data = df_sf_filtered)
+summary(modelo.lm)
+# save(modelo.lm, file="modelo.lm.Rdata")
+```
+
+```{r}
+stepwise_model <- step(modelo.lm, direction = "both")
+formula_step <- formula(stepwise_model)
+summary(stepwise_model)
+
+df_sf_filtered$stepwise_model.res<-residuals(stepwise_model)
+
+tm_shape(df_sf_filtered) +
+        tm_symbols(palette ="YlOrBr",col = "stepwise_model.res",style = "quantile",n=5)+
+        tmap_options(check.and.fix = TRUE)
+```
+
+```{r}
+moran.test(resid(stepwise_model), listw = dinvs_W)
+```
+
+
+
+```{r}
+library(car)
+modelo_vif <- vif(stepwise_model)
+modelo_vif
+```
+
+
+```{r}
+# options(scipen = 0)
+lm_tests <- lm.RStests(stepwise_model, dinvs_W, test = "all")
+tres <- t(sapply(lm_tests, function(x) c(x$statistic, x$parameter, x$p.value)))
+colnames(tres) <- c("Estadística", "df", "p-valor")
+print(tres)
+```
+
+Las dos pruebas robustas son significativas, los dos tipos de dependencia espacial (sustantiva y residual) estan presentes. podemos utilizar sem sar, o mixto sarma
+
+### SAR: Spatial Lag Model - NO
+
+```{r}
+sar_lm <- lagsarlm(formula_step, data=df_sf_filtered, dinvs_W, zero.policy = TRUE)
+summary(sar_lm)
+save(sar_lm, file="sar_lm.Rdata")
+
+moran.test(resid(sar_lm), dinvs_W, alternative="greater", zero.policy=TRUE)
+moran.mc(resid(sar_lm),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+Impactos:
+
+```{r}
+# impacts(sar_lm, listw=dinvs_W,zero.policy = TRUE )
+# impacts(sar.tslm, empirical = TRUE,listw=W,zero.policy = TRUE )
+```
+
+
+
+### Spatial Durbin model - NO
+```{r}
+# SpatialDurbin <- lagsarlm(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE,
+#                                     na.action = na.fail, Durbin = TRUE)
+# summary(SpatialDurbin)
+# save(SpatialDurbin, file="SpatialDurbin.Rdata")
+```
+
+### Spatial laged Xmodel - NO
+```{r}
+# SpatialLagX <- lmSLX(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE,
+#                                na.action = na.fail, Durbin = TRUE)
+# summary(SpatialLagX)
+# save(SpatialLagX, file="SpatialLagX.Rdata")
+# 
+# moran.test(resid(SpatialLagX), dinvs_W, alternative="greater", zero.policy=TRUE)
+# moran.mc(resid(SpatialLagX),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+
+### Spatial Error Model (SEM) - SI
+
+```{r}
+sem_lm <- errorsarlm(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE,
+                        na.action = na.fail,Durbin = FALSE)
+summary(sem_lm)
+save(sem_lm, file="sem_lm.Rdata")
+
+moran.test(resid(sem_lm), dinvs_W, alternative="greater", zero.policy=TRUE)
+moran.mc(resid(sem_lm),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+
+### Spatial Durbin error model - SI
+```{r}
+SpatialDurbinerror<-errorsarlm(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE,
+                               na.action = na.fail,Durbin = TRUE)
+summary(SpatialDurbinerror)
+save(SpatialDurbinerror, file="SpatialDurbinerror.Rdata")
+
+moran.test(resid(SpatialDurbinerror), dinvs_W, alternative="greater", zero.policy=TRUE)
+moran.mc(resid(SpatialDurbinerror),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+
+### Spatial SACSAR model (Kalejian-Prucha) - SI
+
+```{r}
+sacsar_model <- sacsarlm(formula_step, data = df_sf_filtered, listw = dinvs_W, zero.policy = TRUE)
+summary(sacsar_model)
+
+save(sacsar_model, file="sacsar_model.Rdata")
+
+moran.test(resid(sacsar_model), dinvs_W, alternative="greater", zero.policy=TRUE)
+moran.mc(resid(sacsar_model),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+
+### Spatial SACSAR Durbin model (Manski) - no FUNCIONA
+```{r}
+# SpatialSACSARDurbin <- sacsarlm(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE,
+#                                           na.action = na.fail,Durbin = TRUE)
+# summary(SpatialSACSARDurbin)
+# save(SpatialSACSARDurbin, file="SpatialSACSARDurbin.Rdata")
+# 
+# moran.test(resid(SpatialSACSARDurbin), dinvs_W, alternative="greater", zero.policy=TRUE)
+# moran.mc(resid(SpatialSACSARDurbin),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+### SEM Spatial error model v2
+Método Generalizado de los momentos - MISMO QUE SEM_LM
+```{r}
+# errorsar_lm<-errorsarlm(formula_step, data=df_sf_filtered, dinvs_W, zero.policy = TRUE)
+# summary(errorsar_lm)
+# save(errorsar_lm, file="errorsar_lm.Rdata")
+# 
+# moran.test(resid(errorsar_lm), dinvs_W, alternative="greater", zero.policy=TRUE)
+# moran.mc(resid(errorsar_lm),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+o corrigiendo por heterocedassticidad - NO
+
+```{r}
+# errorsar_lm_het <- spreg(formula_step, data=df_sf_filtered, listw=dinvs_W, model="error", het=TRUE)
+# summary(errorsar_lm_het)
+# save(errorsar_lm_het, file="errorsar_lm_het.Rdata")
+# 
+# moran.test(resid(errorsar_lm_het), dinvs_W, alternative="greater", zero.policy=TRUE)
+# moran.mc(resid(errorsar_lm_het),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+o por Feasible Generalized Least Squares (GLS) with the function GMerrorsar. - NO
+
+```{r}
+# errorsar_fgls<-GMerrorsar(formula_step, data=df_sf_filtered, dinvs_W, zero.policy = TRUE)
+# summary(errorsar_fgls)
+# save(errorsar_fgls, file="errorsar_fgls.Rdata")
+# 
+# moran.test(resid(errorsar_fgls), dinvs_W, alternative="greater", zero.policy=TRUE)
+# moran.mc(resid(errorsar_fgls),dinvs_W,zero.policy = TRUE, nsim=1000)
+```
+
+
+### Spautoml - ES EL MEJOR
+
+```{r}
+carrmodel <- spautolm(formula_step, data = df_sf_filtered, dinvs_W, zero.policy = TRUE, family = "CAR")
+
+summary(carrmodel)
+save(carrmodel, file="carrmodel.Rdata")
+
+moran.test(resid(carrmodel), dinvs_W, alternative="greater", zero.policy=TRUE)
+moran.mc(resid(carrmodel),dinvs_W,zero.policy = TRUE, nsim=1000)
+
+
+df_sf_filtered$carrmodel.res<-residuals(carrmodel)
+
+tm_shape(df_sf_filtered) +
+        tm_symbols(palette ="YlOrBr",col = "carrmodel.res",style = "quantile",n=5)+
+        tmap_options(check.and.fix = TRUE)
+```
+
+
